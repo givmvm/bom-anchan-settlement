@@ -8,20 +8,40 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="ボム精算">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <link rel="manifest" href="manifest.webmanifest?v=5">
-    <link rel="stylesheet" href="styles.css?v=5">
+    <link rel="manifest" href="manifest.webmanifest?v=6">
+    <link rel="stylesheet" href="styles.css?v=6">
   </head>
   <body>
-    <main class="app">
+    <section id="passwordGate" class="password-gate" aria-label="パスワード入力">
+      <form id="passwordForm" class="password-card">
+        <p class="eyebrow">Private ledger</p>
+        <h1>ボム &amp; あんちゃん 精算</h1>
+        <label>
+          <span>パスワード</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" inputmode="text" required>
+        </label>
+        <p id="passwordError" class="password-error" aria-live="polite"></p>
+        <button type="submit">開く</button>
+      </form>
+    </section>
+
+    <main id="app" class="app is-locked">
       <section class="header">
         <div>
           <p class="eyebrow">Couple ledger</p>
           <h1>ボム &amp; あんちゃん 精算</h1>
           <p class="lead">日々の支出を追加すると、誰が多く払っているか、最後にいくら精算すればよいかが分かります。</p>
         </div>
-        <div class="summary">
-          <span>使った合計</span>
-          <strong id="totalSpent">0円</strong>
+        <div class="top-cards">
+          <div class="summary">
+            <span>使った合計</span>
+            <strong id="totalSpent">0円</strong>
+          </div>
+          <div class="summary settlement-summary">
+            <span>過不足</span>
+            <strong id="quickSettlementAmount">0円</strong>
+            <p id="quickSettlementText">精算は不要です</p>
+          </div>
         </div>
       </section>
 
@@ -170,7 +190,7 @@
       </form>
     </dialog>
 
-    <script src="sync-config.js?v=5"></script>
-    <script src="script.js?v=5"></script>
+    <script src="sync-config.js?v=6"></script>
+    <script src="script.js?v=6"></script>
   </body>
 </html>

@@ -4,10 +4,18 @@ const PEOPLE = {
 };
 
 const STORAGE_KEY = "couple-ledger-expenses-v1";
+const PASSWORD = "0809PS.";
 
+const app = document.querySelector("#app");
+const passwordGate = document.querySelector("#passwordGate");
+const passwordForm = document.querySelector("#passwordForm");
+const passwordInput = document.querySelector("#passwordInput");
+const passwordError = document.querySelector("#passwordError");
 const addExpenseButton = document.querySelector("#addExpense");
 const expenseRows = document.querySelector("#expenseRows");
 const totalSpent = document.querySelector("#totalSpent");
+const quickSettlementAmount = document.querySelector("#quickSettlementAmount");
+const quickSettlementText = document.querySelector("#quickSettlementText");
 const bomPaid = document.querySelector("#bomPaid");
 const anchanPaid = document.querySelector("#anchanPaid");
 const bomShare = document.querySelector("#bomShare");
@@ -64,6 +72,25 @@ function clamp(value, min, max) {
 
 function formatYen(value) {
   return yen.format(Math.round(value));
+}
+
+function unlockApp() {
+  passwordGate.classList.add("is-unlocked");
+  app.classList.remove("is-locked");
+  sessionStorage.setItem("couple-ledger-unlocked", "true");
+}
+
+function checkPassword(event) {
+  event.preventDefault();
+
+  if (passwordInput.value === PASSWORD) {
+    passwordError.textContent = "";
+    unlockApp();
+    return;
+  }
+
+  passwordError.textContent = "パスワードが違います。";
+  passwordInput.select();
 }
 
 function extractExpenseNumber(id) {
@@ -606,10 +633,13 @@ function setBalance(element, detailElement, balance) {
 
 function renderSettlement(bomDiff, invalidRatios) {
   settlement.innerHTML = "";
+  quickSettlementAmount.className = "";
 
   if (invalidRatios > 0) {
     settlement.className = "settlement-box warn";
     settlement.textContent = `負担割合が100%ではない行が${invalidRatios}件あります。割合を確認してください。`;
+    quickSettlementAmount.textContent = "確認";
+    quickSettlementText.textContent = "負担割合を確認";
     return;
   }
 
@@ -617,12 +647,18 @@ function renderSettlement(bomDiff, invalidRatios) {
 
   if (Math.abs(bomDiff) <= 0.5) {
     settlement.textContent = "今のところ精算は不要です。";
+    quickSettlementAmount.textContent = "0円";
+    quickSettlementText.textContent = "精算は不要です";
     return;
   }
 
   const from = bomDiff > 0 ? PEOPLE.anchan : PEOPLE.bom;
   const to = bomDiff > 0 ? PEOPLE.bom : PEOPLE.anchan;
-  settlement.textContent = `${from} が ${to} に ${formatYen(Math.abs(bomDiff))} 支払う`;
+  const amount = formatYen(Math.abs(bomDiff));
+  settlement.textContent = `${from} が ${to} に ${amount} 支払う`;
+  quickSettlementAmount.textContent = amount;
+  quickSettlementAmount.className = bomDiff > 0 ? "positive" : "negative";
+  quickSettlementText.textContent = `${from} が ${to} に支払う`;
 }
 
 function renderSummary() {
@@ -649,6 +685,7 @@ function render() {
 }
 
 addExpenseButton.addEventListener("click", openAddDialog);
+passwordForm.addEventListener("submit", checkPassword);
 addExpenseForm.addEventListener("submit", registerExpense);
 cancelAddButton.addEventListener("click", closeAddDialog);
 addDialog.addEventListener("click", (event) => {
@@ -673,6 +710,12 @@ if ("serviceWorker" in navigator) {
 }
 
 roomCodeInput.value = activeRoomCode;
+if (sessionStorage.getItem("couple-ledger-unlocked") === "true") {
+  unlockApp();
+} else {
+  passwordInput.focus();
+}
+
 if (isSyncConfigured()) {
   setSyncStatus("共有コードを確認して「同期する」を押してください。");
   startAutoSync();

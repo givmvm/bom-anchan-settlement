@@ -24,10 +24,67 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.is-locked {
+  display: none;
+}
+
 button,
 input,
 select {
   font: inherit;
+}
+
+.password-gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.password-gate.is-unlocked {
+  display: none;
+}
+
+.password-card {
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 24px;
+}
+
+.password-card h1 {
+  font-size: 28px;
+}
+
+.password-card label span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.password-card input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  outline-color: var(--accent);
+}
+
+.password-card button {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 14px;
+}
+
+.password-error {
+  min-height: 22px;
+  margin: 8px 0 0;
+  color: var(--bad);
+  font-weight: 700;
 }
 
 .app {
@@ -88,6 +145,12 @@ h2 {
   padding: 18px;
 }
 
+.top-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+  gap: 12px;
+}
+
 .summary span,
 .stats span,
 .person-card span {
@@ -100,6 +163,13 @@ h2 {
   display: block;
   margin-top: 4px;
   font-size: 26px;
+}
+
+.settlement-summary p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .panel {
@@ -454,6 +524,10 @@ button.danger:hover {
     width: 100%;
   }
 
+  .top-cards {
+    width: 100%;
+  }
+
   .grid {
     grid-template-columns: 1fr;
   }
@@ -476,6 +550,10 @@ button.danger:hover {
 
   h1 {
     font-size: 28px;
+  }
+
+  .top-cards {
+    grid-template-columns: 1fr;
   }
 
   .panel {
