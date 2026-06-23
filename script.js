@@ -688,6 +688,7 @@ function renderMobileList(rows) {
     const button = document.createElement("button");
     const date = document.createElement("span");
     const title = document.createElement("span");
+    const payer = document.createElement("span");
     const amount = document.createElement("span");
     const arrow = document.createElement("span");
 
@@ -696,15 +697,17 @@ function renderMobileList(rows) {
     button.addEventListener("click", () => openEditDialog(expense.id));
     date.className = "mobile-date";
     title.className = "mobile-title";
+    payer.className = "mobile-payer";
     amount.className = "mobile-amount";
     arrow.className = "mobile-arrow";
 
     date.textContent = formatShortDate(expense.date);
     title.textContent = expense.title || "未入力";
+    payer.textContent = PEOPLE[expense.payer] || "";
     amount.textContent = formatYen(expense.amount);
     arrow.textContent = "›";
 
-    button.append(date, title, amount, arrow);
+    button.append(date, title, payer, amount, arrow);
     mobileExpenseList.appendChild(button);
   }
 }
