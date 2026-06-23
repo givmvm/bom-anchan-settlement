@@ -1,10 +1,11 @@
-const CACHE_NAME = "couple-ledger-v2";
+const CACHE_NAME = "couple-ledger-v4";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2",
-  "./script.js?v=2",
-  "./manifest.webmanifest?v=2",
+  "./styles.css?v=4",
+  "./script.js?v=4",
+  "./sync-config.js?v=4",
+  "./manifest.webmanifest?v=4",
   "./icon.svg",
 ];
 

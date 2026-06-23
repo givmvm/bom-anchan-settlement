@@ -21,10 +21,18 @@ const deleteDialog = document.querySelector("#deleteDialog");
 const deleteTarget = document.querySelector("#deleteTarget");
 const cancelDeleteButton = document.querySelector("#cancelDelete");
 const confirmDeleteButton = document.querySelector("#confirmDelete");
+const roomCodeInput = document.querySelector("#roomCode");
+const connectSyncButton = document.querySelector("#connectSync");
+const syncNowButton = document.querySelector("#syncNow");
+const syncStatus = document.querySelector("#syncStatus");
 
 let nextExpenseId = 4;
 let expenses = loadExpenses();
 let pendingDeleteId = null;
+let syncTimer = null;
+let activeRoomCode = localStorage.getItem("couple-ledger-room-code") || "bom-anchan";
+let lastCloudUpdatedAt = localStorage.getItem("couple-ledger-cloud-updated-at") || "";
+let isApplyingRemote = false;
 
 const yen = new Intl.NumberFormat("ja-JP", {
   style: "currency",
@@ -85,6 +93,146 @@ function loadExpenses() {
 
 function saveExpenses() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
+  queueCloudSave();
+}
+
+function normalizeRoomCode(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function getSyncConfig() {
+  return window.COUPLE_LEDGER_SYNC || {};
+}
+
+function isSyncConfigured() {
+  const config = getSyncConfig();
+  return Boolean(config.supabaseUrl && config.supabaseAnonKey);
+}
+
+function setSyncStatus(message, state = "") {
+  syncStatus.textContent = message;
+  syncStatus.className = `sync-status ${state}`.trim();
+}
+
+function supabaseEndpoint(roomCode) {
+  const config = getSyncConfig();
+  const baseUrl = config.supabaseUrl.replace(/\/$/, "");
+  return `${baseUrl}/rest/v1/ledgers?room_code=eq.${encodeURIComponent(roomCode)}`;
+}
+
+function supabaseHeaders(prefer) {
+  const config = getSyncConfig();
+  const headers = {
+    apikey: config.supabaseAnonKey,
+    Authorization: `Bearer ${config.supabaseAnonKey}`,
+    "Content-Type": "application/json",
+  };
+  if (prefer) headers.Prefer = prefer;
+  return headers;
+}
+
+async function loadCloudLedger(roomCode) {
+  const response = await fetch(supabaseEndpoint(roomCode), {
+    headers: supabaseHeaders(),
+  });
+  if (!response.ok) throw new Error("クラウドから読み込めませんでした。");
+  const rows = await response.json();
+  return rows[0] || null;
+}
+
+async function saveCloudLedger(roomCode) {
+  if (!isSyncConfigured() || isApplyingRemote || !roomCode) return;
+
+  const now = new Date().toISOString();
+  const response = await fetch(supabaseEndpoint(roomCode), {
+    method: "POST",
+    headers: supabaseHeaders("resolution=merge-duplicates"),
+    body: JSON.stringify({
+      room_code: roomCode,
+      data: expenses,
+      updated_at: now,
+    }),
+  });
+
+  if (!response.ok) throw new Error("クラウドへ保存できませんでした。");
+  lastCloudUpdatedAt = now;
+  localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
+  setSyncStatus(`同期済み: ${new Date(now).toLocaleString("ja-JP")}`, "ok");
+}
+
+function queueCloudSave() {
+  if (!isSyncConfigured() || isApplyingRemote || !activeRoomCode) return;
+  window.clearTimeout(syncTimer);
+  syncTimer = window.setTimeout(() => {
+    saveCloudLedger(activeRoomCode).catch((error) => setSyncStatus(error.message, "warn"));
+  }, 700);
+}
+
+function applyRemoteExpenses(remoteExpenses, updatedAt) {
+  if (!Array.isArray(remoteExpenses)) return;
+  isApplyingRemote = true;
+  expenses = remoteExpenses.map((expense, index) => {
+    const bomRatio = clamp(toNumber(expense.bomRatio), 0, 100);
+    return {
+      id: expense.id || `expense-${index + 1}`,
+      date: expense.date || today(),
+      title: expense.title || "",
+      amount: Math.max(0, toNumber(expense.amount)),
+      payer: expense.payer === "anchan" ? "anchan" : "bom",
+      bomRatio,
+      anchanRatio: 100 - bomRatio,
+    };
+  });
+  nextExpenseId = expenses.length + 1;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
+  lastCloudUpdatedAt = updatedAt || "";
+  localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
+  render();
+  isApplyingRemote = false;
+}
+
+async function syncWithCloud({ forcePush = false } = {}) {
+  if (!isSyncConfigured()) {
+    setSyncStatus("クラウド設定がまだありません。Supabase設定を入れると同期できます。", "warn");
+    return;
+  }
+
+  const roomCode = normalizeRoomCode(roomCodeInput.value);
+  if (!roomCode) {
+    setSyncStatus("共有コードを入れてください。", "warn");
+    return;
+  }
+
+  activeRoomCode = roomCode;
+  roomCodeInput.value = roomCode;
+  localStorage.setItem("couple-ledger-room-code", roomCode);
+  setSyncStatus("同期中です...", "");
+
+  const cloudLedger = await loadCloudLedger(roomCode);
+  if (!cloudLedger || forcePush) {
+    await saveCloudLedger(roomCode);
+    return;
+  }
+
+  const cloudUpdatedAt = cloudLedger.updated_at || "";
+  if (cloudUpdatedAt && cloudUpdatedAt !== lastCloudUpdatedAt) {
+    applyRemoteExpenses(cloudLedger.data, cloudUpdatedAt);
+    setSyncStatus(`クラウドから読み込みました: ${new Date(cloudUpdatedAt).toLocaleString("ja-JP")}`, "ok");
+    return;
+  }
+
+  await saveCloudLedger(roomCode);
+}
+
+function startAutoSync() {
+  window.setInterval(() => {
+    syncWithCloud().catch((error) => setSyncStatus(error.message, "warn"));
+  }, 8000);
 }
 
 function calculateExpense(expense) {
@@ -422,9 +570,23 @@ confirmDeleteButton.addEventListener("click", confirmDeleteExpense);
 deleteDialog.addEventListener("click", (event) => {
   if (event.target === deleteDialog) closeDeleteDialog();
 });
+connectSyncButton.addEventListener("click", () => {
+  syncWithCloud({ forcePush: false }).catch((error) => setSyncStatus(error.message, "warn"));
+});
+syncNowButton.addEventListener("click", () => {
+  syncWithCloud().catch((error) => setSyncStatus(error.message, "warn"));
+});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("service-worker.js").catch(() => {});
+}
+
+roomCodeInput.value = activeRoomCode;
+if (isSyncConfigured()) {
+  setSyncStatus("共有コードを確認して「同期する」を押してください。");
+  startAutoSync();
+} else {
+  setSyncStatus("クラウド設定がまだありません。設定後に同期できます。", "warn");
 }
 
 render();
