@@ -8,8 +8,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="ボム精算">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <link rel="manifest" href="manifest.webmanifest?v=4">
-    <link rel="stylesheet" href="styles.css?v=4">
+    <link rel="manifest" href="manifest.webmanifest?v=5">
+    <link rel="stylesheet" href="styles.css?v=5">
   </head>
   <body>
     <main class="app">
@@ -125,7 +125,52 @@
       </form>
     </dialog>
 
-    <script src="sync-config.js?v=4"></script>
-    <script src="script.js?v=4"></script>
+    <dialog id="addDialog" class="entry-dialog">
+      <form id="addExpenseForm">
+        <h2>支出の詳細を入力</h2>
+        <div class="entry-fields">
+          <label>
+            <span>日にち</span>
+            <input id="newDate" type="date" required>
+          </label>
+          <label>
+            <span>何に使ったか</span>
+            <input id="newTitle" type="text" placeholder="例: ランチ" required>
+          </label>
+          <label>
+            <span>金額</span>
+            <input id="newAmount" type="number" min="0" step="1" inputmode="decimal" placeholder="例: 3200" required>
+          </label>
+          <label>
+            <span>払った人</span>
+            <select id="newPayer">
+              <option value="bom">ボム</option>
+              <option value="anchan">あんちゃん</option>
+            </select>
+          </label>
+          <label>
+            <span>ボム負担割合</span>
+            <div class="percent-input">
+              <input id="newBomRatio" type="number" min="0" max="100" step="1" inputmode="decimal" value="50">
+              <span>%</span>
+            </div>
+          </label>
+          <label>
+            <span>あんちゃん負担割合</span>
+            <div class="percent-input">
+              <input id="newAnchanRatio" type="number" min="0" max="100" step="1" inputmode="decimal" value="50">
+              <span>%</span>
+            </div>
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button id="cancelAdd" class="secondary" type="button">キャンセル</button>
+          <button type="submit">登録</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="sync-config.js?v=5"></script>
+    <script src="script.js?v=5"></script>
   </body>
 </html>

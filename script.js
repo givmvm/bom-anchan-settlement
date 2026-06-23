@@ -25,6 +25,15 @@ const roomCodeInput = document.querySelector("#roomCode");
 const connectSyncButton = document.querySelector("#connectSync");
 const syncNowButton = document.querySelector("#syncNow");
 const syncStatus = document.querySelector("#syncStatus");
+const addDialog = document.querySelector("#addDialog");
+const addExpenseForm = document.querySelector("#addExpenseForm");
+const cancelAddButton = document.querySelector("#cancelAdd");
+const newDateInput = document.querySelector("#newDate");
+const newTitleInput = document.querySelector("#newTitle");
+const newAmountInput = document.querySelector("#newAmount");
+const newPayerInput = document.querySelector("#newPayer");
+const newBomRatioInput = document.querySelector("#newBomRatio");
+const newAnchanRatioInput = document.querySelector("#newAnchanRatio");
 
 let nextExpenseId = 4;
 let expenses = loadExpenses();
@@ -57,6 +66,23 @@ function formatYen(value) {
   return yen.format(Math.round(value));
 }
 
+function extractExpenseNumber(id) {
+  const match = String(id || "").match(/\d+$/);
+  return match ? Number(match[0]) : 0;
+}
+
+function createExpenseId() {
+  return `expense-${nextExpenseId++}`;
+}
+
+function sortExpenses(rows) {
+  return [...rows].sort((a, b) => {
+    const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
+    if (dateCompare !== 0) return dateCompare;
+    return extractExpenseNumber(b.id) - extractExpenseNumber(a.id);
+  });
+}
+
 function defaultExpenses() {
   return [
     { id: "expense-1", date: today(), title: "ランチ", amount: 3200, payer: "bom", bomRatio: 50, anchanRatio: 50 },
@@ -75,16 +101,16 @@ function loadExpenses() {
     const normalized = parsed.map((expense, index) => {
       const bomRatio = clamp(toNumber(expense.bomRatio), 0, 100);
       return {
-      id: expense.id || `expense-${index + 1}`,
-      date: expense.date || today(),
-      title: expense.title || "",
-      amount: Math.max(0, toNumber(expense.amount)),
-      payer: expense.payer === "anchan" ? "anchan" : "bom",
-      bomRatio,
-      anchanRatio: 100 - bomRatio,
+        id: expense.id || `expense-${index + 1}`,
+        date: expense.date || today(),
+        title: expense.title || "",
+        amount: Math.max(0, toNumber(expense.amount)),
+        payer: expense.payer === "anchan" ? "anchan" : "bom",
+        bomRatio,
+        anchanRatio: 100 - bomRatio,
       };
     });
-    nextExpenseId = normalized.length + 1;
+    nextExpenseId = Math.max(...normalized.map((expense) => extractExpenseNumber(expense.id)), 0) + 1;
     return normalized;
   } catch {
     return defaultExpenses();
@@ -188,7 +214,7 @@ function applyRemoteExpenses(remoteExpenses, updatedAt) {
       anchanRatio: 100 - bomRatio,
     };
   });
-  nextExpenseId = expenses.length + 1;
+  nextExpenseId = Math.max(...expenses.map((expense) => extractExpenseNumber(expense.id)), 0) + 1;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
   lastCloudUpdatedAt = updatedAt || "";
   localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
@@ -270,6 +296,7 @@ function calculateTotals(rows) {
 }
 
 function updateExpense(id, key, value) {
+  const shouldResort = key === "date";
   expenses = expenses.map((expense) => {
     if (expense.id !== id) return expense;
 
@@ -290,26 +317,83 @@ function updateExpense(id, key, value) {
   });
 
   saveExpenses();
+  if (shouldResort) {
+    render();
+    return;
+  }
   updateLiveRow(id);
   renderSummary();
 }
 
-function addExpense() {
+function addExpense(expense) {
   expenses = [
     ...expenses,
-    {
-      id: `expense-${nextExpenseId++}`,
-      date: today(),
-      title: "",
-      amount: 0,
-      payer: "bom",
-      bomRatio: 50,
-      anchanRatio: 50,
-    },
+    expense,
   ];
 
   saveExpenses();
   render();
+}
+
+function resetAddForm() {
+  addExpenseForm.reset();
+  newDateInput.value = today();
+  newBomRatioInput.value = "50";
+  newAnchanRatioInput.value = "50";
+}
+
+function openAddDialog() {
+  resetAddForm();
+
+  if (typeof addDialog.showModal === "function") {
+    addDialog.showModal();
+    newTitleInput.focus();
+    return;
+  }
+
+  addDialog.setAttribute("open", "");
+  newTitleInput.focus();
+}
+
+function closeAddDialog() {
+  if (typeof addDialog.close === "function") {
+    addDialog.close();
+    return;
+  }
+
+  addDialog.removeAttribute("open");
+}
+
+function syncNewRatios(changedKey) {
+  if (changedKey === "bom") {
+    const bomRatio = clamp(toNumber(newBomRatioInput.value), 0, 100);
+    newBomRatioInput.value = bomRatio;
+    newAnchanRatioInput.value = 100 - bomRatio;
+    return;
+  }
+
+  const anchanRatio = clamp(toNumber(newAnchanRatioInput.value), 0, 100);
+  newAnchanRatioInput.value = anchanRatio;
+  newBomRatioInput.value = 100 - anchanRatio;
+}
+
+function registerExpense(event) {
+  event.preventDefault();
+
+  if (!addExpenseForm.reportValidity()) return;
+
+  const bomRatio = clamp(toNumber(newBomRatioInput.value), 0, 100);
+  addExpense({
+    id: createExpenseId(),
+    date: newDateInput.value || today(),
+    title: newTitleInput.value.trim(),
+    amount: Math.max(0, toNumber(newAmountInput.value)),
+    payer: newPayerInput.value === "anchan" ? "anchan" : "bom",
+    bomRatio,
+    anchanRatio: 100 - bomRatio,
+  });
+
+  closeAddDialog();
 }
 
 function removeExpense(id) {
@@ -559,12 +643,19 @@ function renderSummary() {
 }
 
 function render() {
-  const rows = expenses.map(calculateExpense);
+  const rows = sortExpenses(expenses.map(calculateExpense));
   renderRows(rows);
   renderSummary();
 }
 
-addExpenseButton.addEventListener("click", addExpense);
+addExpenseButton.addEventListener("click", openAddDialog);
+addExpenseForm.addEventListener("submit", registerExpense);
+cancelAddButton.addEventListener("click", closeAddDialog);
+addDialog.addEventListener("click", (event) => {
+  if (event.target === addDialog) closeAddDialog();
+});
+newBomRatioInput.addEventListener("input", () => syncNewRatios("bom"));
+newAnchanRatioInput.addEventListener("input", () => syncNewRatios("anchan"));
 cancelDeleteButton.addEventListener("click", closeDeleteDialog);
 confirmDeleteButton.addEventListener("click", confirmDeleteExpense);
 deleteDialog.addEventListener("click", (event) => {
