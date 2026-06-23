@@ -1,0 +1,18 @@
+{
+  "name": "ボム & あんちゃん 精算",
+  "short_name": "ボム精算",
+  "description": "ボムとあんちゃんの日々の支出を記録して精算するアプリ",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#2563eb",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

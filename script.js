@@ -1,0 +1,430 @@
+const PEOPLE = {
+  bom: "ボム",
+  anchan: "あんちゃん",
+};
+
+const STORAGE_KEY = "couple-ledger-expenses-v1";
+
+const addExpenseButton = document.querySelector("#addExpense");
+const expenseRows = document.querySelector("#expenseRows");
+const totalSpent = document.querySelector("#totalSpent");
+const bomPaid = document.querySelector("#bomPaid");
+const anchanPaid = document.querySelector("#anchanPaid");
+const bomShare = document.querySelector("#bomShare");
+const anchanShare = document.querySelector("#anchanShare");
+const bomBalance = document.querySelector("#bomBalance");
+const anchanBalance = document.querySelector("#anchanBalance");
+const bomDetail = document.querySelector("#bomDetail");
+const anchanDetail = document.querySelector("#anchanDetail");
+const settlement = document.querySelector("#settlement");
+const deleteDialog = document.querySelector("#deleteDialog");
+const deleteTarget = document.querySelector("#deleteTarget");
+const cancelDeleteButton = document.querySelector("#cancelDelete");
+const confirmDeleteButton = document.querySelector("#confirmDelete");
+
+let nextExpenseId = 4;
+let expenses = loadExpenses();
+let pendingDeleteId = null;
+
+const yen = new Intl.NumberFormat("ja-JP", {
+  style: "currency",
+  currency: "JPY",
+  maximumFractionDigits: 0,
+});
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatYen(value) {
+  return yen.format(Math.round(value));
+}
+
+function defaultExpenses() {
+  return [
+    { id: "expense-1", date: today(), title: "ランチ", amount: 3200, payer: "bom", bomRatio: 50, anchanRatio: 50 },
+    { id: "expense-2", date: today(), title: "スーパー", amount: 5800, payer: "anchan", bomRatio: 60, anchanRatio: 40 },
+    { id: "expense-3", date: today(), title: "映画", amount: 4000, payer: "bom", bomRatio: 50, anchanRatio: 50 },
+  ];
+}
+
+function loadExpenses() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return defaultExpenses();
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (!Array.isArray(parsed)) return defaultExpenses();
+    const normalized = parsed.map((expense, index) => {
+      const bomRatio = clamp(toNumber(expense.bomRatio), 0, 100);
+      return {
+      id: expense.id || `expense-${index + 1}`,
+      date: expense.date || today(),
+      title: expense.title || "",
+      amount: Math.max(0, toNumber(expense.amount)),
+      payer: expense.payer === "anchan" ? "anchan" : "bom",
+      bomRatio,
+      anchanRatio: 100 - bomRatio,
+      };
+    });
+    nextExpenseId = normalized.length + 1;
+    return normalized;
+  } catch {
+    return defaultExpenses();
+  }
+}
+
+function saveExpenses() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
+}
+
+function calculateExpense(expense) {
+  const bomRate = expense.bomRatio / 100;
+  const anchanRate = expense.anchanRatio / 100;
+
+  return {
+    ...expense,
+    bomCost: expense.amount * bomRate,
+    anchanCost: expense.amount * anchanRate,
+    ratioOk: true,
+  };
+}
+
+function calculateTotals(rows) {
+  return rows.reduce(
+    (totals, expense) => {
+      totals.spent += expense.amount;
+      totals.bomPaid += expense.payer === "bom" ? expense.amount : 0;
+      totals.anchanPaid += expense.payer === "anchan" ? expense.amount : 0;
+      totals.bomShare += expense.bomCost;
+      totals.anchanShare += expense.anchanCost;
+      totals.invalidRatios += expense.ratioOk ? 0 : 1;
+      return totals;
+    },
+    {
+      spent: 0,
+      bomPaid: 0,
+      anchanPaid: 0,
+      bomShare: 0,
+      anchanShare: 0,
+      invalidRatios: 0,
+    }
+  );
+}
+
+function updateExpense(id, key, value) {
+  expenses = expenses.map((expense) => {
+    if (expense.id !== id) return expense;
+
+    const next = { ...expense };
+    if (key === "amount") next.amount = Math.max(0, toNumber(value));
+    if (key === "bomRatio") {
+      next.bomRatio = clamp(toNumber(value), 0, 100);
+      next.anchanRatio = 100 - next.bomRatio;
+    }
+    if (key === "anchanRatio") {
+      next.anchanRatio = clamp(toNumber(value), 0, 100);
+      next.bomRatio = 100 - next.anchanRatio;
+    }
+    if (key === "date") next.date = value;
+    if (key === "title") next.title = value;
+    if (key === "payer") next.payer = value === "anchan" ? "anchan" : "bom";
+    return next;
+  });
+
+  saveExpenses();
+  updateLiveRow(id);
+  renderSummary();
+}
+
+function addExpense() {
+  expenses = [
+    ...expenses,
+    {
+      id: `expense-${nextExpenseId++}`,
+      date: today(),
+      title: "",
+      amount: 0,
+      payer: "bom",
+      bomRatio: 50,
+      anchanRatio: 50,
+    },
+  ];
+
+  saveExpenses();
+  render();
+}
+
+function removeExpense(id) {
+  expenses = expenses.filter((expense) => expense.id !== id);
+  saveExpenses();
+  render();
+}
+
+function requestDeleteExpense(id) {
+  const expense = getExpense(id);
+  pendingDeleteId = id;
+  deleteTarget.textContent = expense?.title
+    ? `「${expense.title}」の支出を削除します。`
+    : "この支出を削除します。";
+
+  if (typeof deleteDialog.showModal === "function") {
+    deleteDialog.showModal();
+    return;
+  }
+
+  if (window.confirm("本当に削除してもよろしいですか？")) {
+    removeExpense(id);
+  }
+}
+
+function closeDeleteDialog() {
+  pendingDeleteId = null;
+  deleteDialog.close();
+}
+
+function confirmDeleteExpense() {
+  if (pendingDeleteId) {
+    removeExpense(pendingDeleteId);
+  }
+  closeDeleteDialog();
+}
+
+function createInput(type, value, label, id, key) {
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = value;
+  input.ariaLabel = label;
+  input.dataset.id = id;
+  input.dataset.key = key;
+
+  if (type === "number") {
+    input.min = "0";
+    input.step = key.includes("Ratio") ? "1" : "1";
+    input.inputMode = "decimal";
+  }
+
+  input.addEventListener("input", (event) => updateExpense(id, key, event.target.value));
+  return input;
+}
+
+function createRatioInput(value, label, id, key) {
+  const wrap = document.createElement("div");
+  const input = createInput("number", value, label, id, key);
+  const suffix = document.createElement("span");
+
+  wrap.className = "percent-input";
+  suffix.textContent = "%";
+  input.max = "100";
+  wrap.append(input, suffix);
+  return wrap;
+}
+
+function createPayerSelect(value, id) {
+  const select = document.createElement("select");
+  select.ariaLabel = "払った人";
+  select.dataset.id = id;
+  select.dataset.key = "payer";
+
+  for (const [key, name] of Object.entries(PEOPLE)) {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = name;
+    option.selected = value === key;
+    select.appendChild(option);
+  }
+
+  select.addEventListener("change", (event) => updateExpense(id, "payer", event.target.value));
+  return select;
+}
+
+function renderRows(rows) {
+  const activeElement = document.activeElement;
+  const activeId = activeElement?.dataset?.id;
+  const activeKey = activeElement?.dataset?.key;
+
+  expenseRows.innerHTML = "";
+
+  if (rows.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 9;
+    td.className = "empty-row";
+    td.textContent = "まだ支出がありません。支出を追加してください。";
+    tr.appendChild(td);
+    expenseRows.appendChild(tr);
+    return;
+  }
+
+  for (const expense of rows) {
+    const tr = document.createElement("tr");
+    if (!expense.ratioOk) tr.className = "row-warn";
+
+    const dateCell = document.createElement("td");
+    const titleCell = document.createElement("td");
+    const amountCell = document.createElement("td");
+    const payerCell = document.createElement("td");
+    const bomRatioCell = document.createElement("td");
+    const anchanRatioCell = document.createElement("td");
+    const bomCostCell = document.createElement("td");
+    const anchanCostCell = document.createElement("td");
+    const actionCell = document.createElement("td");
+    const deleteButton = document.createElement("button");
+    const labeledCells = [
+      [dateCell, "日にち"],
+      [titleCell, "何に使ったか"],
+      [amountCell, "金額"],
+      [payerCell, "払った人"],
+      [bomRatioCell, "ボム負担割合"],
+      [anchanRatioCell, "あんちゃん負担割合"],
+      [bomCostCell, "ボム負担額"],
+      [anchanCostCell, "あんちゃん負担額"],
+      [actionCell, ""],
+    ];
+
+    dateCell.appendChild(createInput("date", expense.date, "日にち", expense.id, "date"));
+    titleCell.appendChild(createInput("text", expense.title, "何に使ったか", expense.id, "title"));
+    amountCell.appendChild(createInput("number", expense.amount, "金額", expense.id, "amount"));
+    payerCell.appendChild(createPayerSelect(expense.payer, expense.id));
+    bomRatioCell.appendChild(createRatioInput(expense.bomRatio, "ボム負担割合", expense.id, "bomRatio"));
+    anchanRatioCell.appendChild(createRatioInput(expense.anchanRatio, "あんちゃん負担割合", expense.id, "anchanRatio"));
+
+    bomCostCell.className = "amount";
+    bomCostCell.dataset.id = expense.id;
+    bomCostCell.dataset.key = "bomCost";
+    bomCostCell.textContent = formatYen(expense.bomCost);
+    anchanCostCell.className = "amount";
+    anchanCostCell.dataset.id = expense.id;
+    anchanCostCell.dataset.key = "anchanCost";
+    anchanCostCell.textContent = formatYen(expense.anchanCost);
+
+    deleteButton.className = "delete";
+    deleteButton.type = "button";
+    deleteButton.textContent = "×";
+    deleteButton.ariaLabel = "支出を削除";
+    deleteButton.addEventListener("click", () => requestDeleteExpense(expense.id));
+    actionCell.appendChild(deleteButton);
+
+    for (const [cell, label] of labeledCells) {
+      cell.dataset.label = label;
+    }
+
+    tr.append(
+      dateCell,
+      titleCell,
+      amountCell,
+      payerCell,
+      bomRatioCell,
+      anchanRatioCell,
+      bomCostCell,
+      anchanCostCell,
+      actionCell
+    );
+    expenseRows.appendChild(tr);
+  }
+
+  if (activeId && activeKey) {
+    const nextActive = expenseRows.querySelector(`[data-id="${activeId}"][data-key="${activeKey}"]`);
+    nextActive?.focus();
+  }
+}
+
+function getExpense(id) {
+  return expenses.find((expense) => expense.id === id);
+}
+
+function updateLiveRow(id) {
+  const expense = getExpense(id);
+  if (!expense) return;
+
+  const row = calculateExpense(expense);
+  const bomRatioInput = expenseRows.querySelector(`[data-id="${id}"][data-key="bomRatio"]`);
+  const anchanRatioInput = expenseRows.querySelector(`[data-id="${id}"][data-key="anchanRatio"]`);
+  const bomCostCell = expenseRows.querySelector(`[data-id="${id}"][data-key="bomCost"]`);
+  const anchanCostCell = expenseRows.querySelector(`[data-id="${id}"][data-key="anchanCost"]`);
+
+  if (document.activeElement !== bomRatioInput) bomRatioInput.value = row.bomRatio;
+  if (document.activeElement !== anchanRatioInput) anchanRatioInput.value = row.anchanRatio;
+  bomCostCell.textContent = formatYen(row.bomCost);
+  anchanCostCell.textContent = formatYen(row.anchanCost);
+}
+
+function setBalance(element, detailElement, balance) {
+  element.textContent = formatYen(Math.abs(balance));
+  element.className = balance >= 0 ? "positive" : "negative";
+
+  if (Math.abs(balance) <= 0.5) {
+    element.textContent = "0円";
+    element.className = "";
+    detailElement.textContent = "過不足なし";
+    return;
+  }
+
+  detailElement.textContent = balance > 0 ? "多く払っている" : "不足している";
+}
+
+function renderSettlement(bomDiff, invalidRatios) {
+  settlement.innerHTML = "";
+
+  if (invalidRatios > 0) {
+    settlement.className = "settlement-box warn";
+    settlement.textContent = `負担割合が100%ではない行が${invalidRatios}件あります。割合を確認してください。`;
+    return;
+  }
+
+  settlement.className = "settlement-box";
+
+  if (Math.abs(bomDiff) <= 0.5) {
+    settlement.textContent = "今のところ精算は不要です。";
+    return;
+  }
+
+  const from = bomDiff > 0 ? PEOPLE.anchan : PEOPLE.bom;
+  const to = bomDiff > 0 ? PEOPLE.bom : PEOPLE.anchan;
+  settlement.textContent = `${from} が ${to} に ${formatYen(Math.abs(bomDiff))} 支払う`;
+}
+
+function renderSummary() {
+  const rows = expenses.map(calculateExpense);
+  const totals = calculateTotals(rows);
+  const bomDiff = totals.bomPaid - totals.bomShare;
+  const anchanDiff = totals.anchanPaid - totals.anchanShare;
+
+  totalSpent.textContent = formatYen(totals.spent);
+  bomPaid.textContent = formatYen(totals.bomPaid);
+  anchanPaid.textContent = formatYen(totals.anchanPaid);
+  bomShare.textContent = formatYen(totals.bomShare);
+  anchanShare.textContent = formatYen(totals.anchanShare);
+
+  setBalance(bomBalance, bomDetail, bomDiff);
+  setBalance(anchanBalance, anchanDetail, anchanDiff);
+  renderSettlement(bomDiff, totals.invalidRatios);
+}
+
+function render() {
+  const rows = expenses.map(calculateExpense);
+  renderRows(rows);
+  renderSummary();
+}
+
+addExpenseButton.addEventListener("click", addExpense);
+cancelDeleteButton.addEventListener("click", closeDeleteDialog);
+confirmDeleteButton.addEventListener("click", confirmDeleteExpense);
+deleteDialog.addEventListener("click", (event) => {
+  if (event.target === deleteDialog) closeDeleteDialog();
+});
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js").catch(() => {});
+}
+
+render();
