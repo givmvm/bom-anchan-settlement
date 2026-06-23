@@ -8,8 +8,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="ボム精算">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <link rel="manifest" href="manifest.webmanifest?v=6">
-    <link rel="stylesheet" href="styles.css?v=6">
+    <link rel="manifest" href="manifest.webmanifest?v=7">
+    <link rel="stylesheet" href="styles.css?v=7">
   </head>
   <body>
     <section id="passwordGate" class="password-gate" aria-label="パスワード入力">
@@ -89,6 +89,7 @@
               <tbody id="expenseRows"></tbody>
             </table>
           </div>
+          <div id="mobileExpenseList" class="mobile-expense-list" aria-label="スマホ用支出一覧"></div>
         </section>
 
         <aside class="panel result-panel" aria-label="精算結果">
@@ -147,7 +148,7 @@
 
     <dialog id="addDialog" class="entry-dialog">
       <form id="addExpenseForm">
-        <h2>支出の詳細を入力</h2>
+        <h2 id="expenseFormTitle">支出の詳細を入力</h2>
         <div class="entry-fields">
           <label>
             <span>日にち</span>
@@ -184,13 +185,14 @@
           </label>
         </div>
         <div class="dialog-actions">
+          <button id="deleteFromForm" class="danger form-delete" type="button">削除</button>
           <button id="cancelAdd" class="secondary" type="button">キャンセル</button>
-          <button type="submit">登録</button>
+          <button id="saveExpense" type="submit">登録</button>
         </div>
       </form>
     </dialog>
 
-    <script src="sync-config.js?v=6"></script>
-    <script src="script.js?v=6"></script>
+    <script src="sync-config.js?v=7"></script>
+    <script src="script.js?v=7"></script>
   </body>
 </html>

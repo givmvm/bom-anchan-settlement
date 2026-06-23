@@ -13,6 +13,7 @@ const passwordInput = document.querySelector("#passwordInput");
 const passwordError = document.querySelector("#passwordError");
 const addExpenseButton = document.querySelector("#addExpense");
 const expenseRows = document.querySelector("#expenseRows");
+const mobileExpenseList = document.querySelector("#mobileExpenseList");
 const totalSpent = document.querySelector("#totalSpent");
 const quickSettlementAmount = document.querySelector("#quickSettlementAmount");
 const quickSettlementText = document.querySelector("#quickSettlementText");
@@ -35,7 +36,10 @@ const syncNowButton = document.querySelector("#syncNow");
 const syncStatus = document.querySelector("#syncStatus");
 const addDialog = document.querySelector("#addDialog");
 const addExpenseForm = document.querySelector("#addExpenseForm");
+const expenseFormTitle = document.querySelector("#expenseFormTitle");
 const cancelAddButton = document.querySelector("#cancelAdd");
+const deleteFromFormButton = document.querySelector("#deleteFromForm");
+const saveExpenseButton = document.querySelector("#saveExpense");
 const newDateInput = document.querySelector("#newDate");
 const newTitleInput = document.querySelector("#newTitle");
 const newAmountInput = document.querySelector("#newAmount");
@@ -50,6 +54,7 @@ let syncTimer = null;
 let activeRoomCode = localStorage.getItem("couple-ledger-room-code") || "bom-anchan";
 let lastCloudUpdatedAt = localStorage.getItem("couple-ledger-cloud-updated-at") || "";
 let isApplyingRemote = false;
+let editingExpenseId = null;
 
 const yen = new Intl.NumberFormat("ja-JP", {
   style: "currency",
@@ -72,6 +77,18 @@ function clamp(value, min, max) {
 
 function formatYen(value) {
   return yen.format(Math.round(value));
+}
+
+function formatShortDate(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value || "";
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function formatMonthLabel(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "日付なし";
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`;
 }
 
 function unlockApp() {
@@ -364,6 +381,10 @@ function addExpense(expense) {
 
 function resetAddForm() {
   addExpenseForm.reset();
+  editingExpenseId = null;
+  expenseFormTitle.textContent = "支出の詳細を入力";
+  saveExpenseButton.textContent = "登録";
+  deleteFromFormButton.classList.add("is-hidden");
   newDateInput.value = today();
   newBomRatioInput.value = "50";
   newAnchanRatioInput.value = "50";
@@ -391,6 +412,35 @@ function closeAddDialog() {
   addDialog.removeAttribute("open");
 }
 
+function fillExpenseForm(expense) {
+  newDateInput.value = expense.date || today();
+  newTitleInput.value = expense.title || "";
+  newAmountInput.value = Math.max(0, toNumber(expense.amount));
+  newPayerInput.value = expense.payer === "anchan" ? "anchan" : "bom";
+  newBomRatioInput.value = clamp(toNumber(expense.bomRatio), 0, 100);
+  newAnchanRatioInput.value = 100 - clamp(toNumber(expense.bomRatio), 0, 100);
+}
+
+function openEditDialog(id) {
+  const expense = getExpense(id);
+  if (!expense) return;
+
+  editingExpenseId = id;
+  expenseFormTitle.textContent = "支出の詳細を編集";
+  saveExpenseButton.textContent = "保存";
+  deleteFromFormButton.classList.remove("is-hidden");
+  fillExpenseForm(expense);
+
+  if (typeof addDialog.showModal === "function") {
+    addDialog.showModal();
+    newTitleInput.focus();
+    return;
+  }
+
+  addDialog.setAttribute("open", "");
+  newTitleInput.focus();
+}
+
 function syncNewRatios(changedKey) {
   if (changedKey === "bom") {
     const bomRatio = clamp(toNumber(newBomRatioInput.value), 0, 100);
@@ -410,15 +460,23 @@ function registerExpense(event) {
   if (!addExpenseForm.reportValidity()) return;
 
   const bomRatio = clamp(toNumber(newBomRatioInput.value), 0, 100);
-  addExpense({
-    id: createExpenseId(),
+  const nextExpense = {
+    id: editingExpenseId || createExpenseId(),
     date: newDateInput.value || today(),
     title: newTitleInput.value.trim(),
     amount: Math.max(0, toNumber(newAmountInput.value)),
     payer: newPayerInput.value === "anchan" ? "anchan" : "bom",
     bomRatio,
     anchanRatio: 100 - bomRatio,
-  });
+  };
+
+  if (editingExpenseId) {
+    expenses = expenses.map((expense) => (expense.id === editingExpenseId ? nextExpense : expense));
+    saveExpenses();
+    render();
+  } else {
+    addExpense(nextExpense);
+  }
 
   closeAddDialog();
 }
@@ -456,6 +514,13 @@ function confirmDeleteExpense() {
     removeExpense(pendingDeleteId);
   }
   closeDeleteDialog();
+}
+
+function deleteEditingExpense() {
+  if (!editingExpenseId) return;
+  const id = editingExpenseId;
+  closeAddDialog();
+  requestDeleteExpense(id);
 }
 
 function createInput(type, value, label, id, key) {
@@ -597,6 +662,53 @@ function renderRows(rows) {
   }
 }
 
+function renderMobileList(rows) {
+  mobileExpenseList.innerHTML = "";
+
+  if (rows.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "mobile-empty";
+    empty.textContent = "まだ支出がありません。";
+    mobileExpenseList.appendChild(empty);
+    return;
+  }
+
+  let currentMonth = "";
+
+  for (const expense of rows) {
+    const month = formatMonthLabel(expense.date);
+    if (month !== currentMonth) {
+      currentMonth = month;
+      const monthHeader = document.createElement("div");
+      monthHeader.className = "mobile-month";
+      monthHeader.textContent = month;
+      mobileExpenseList.appendChild(monthHeader);
+    }
+
+    const button = document.createElement("button");
+    const date = document.createElement("span");
+    const title = document.createElement("span");
+    const amount = document.createElement("span");
+    const arrow = document.createElement("span");
+
+    button.type = "button";
+    button.className = "mobile-expense-button";
+    button.addEventListener("click", () => openEditDialog(expense.id));
+    date.className = "mobile-date";
+    title.className = "mobile-title";
+    amount.className = "mobile-amount";
+    arrow.className = "mobile-arrow";
+
+    date.textContent = formatShortDate(expense.date);
+    title.textContent = expense.title || "未入力";
+    amount.textContent = formatYen(expense.amount);
+    arrow.textContent = "›";
+
+    button.append(date, title, amount, arrow);
+    mobileExpenseList.appendChild(button);
+  }
+}
+
 function getExpense(id) {
   return expenses.find((expense) => expense.id === id);
 }
@@ -681,6 +793,7 @@ function renderSummary() {
 function render() {
   const rows = sortExpenses(expenses.map(calculateExpense));
   renderRows(rows);
+  renderMobileList(rows);
   renderSummary();
 }
 
@@ -688,6 +801,7 @@ addExpenseButton.addEventListener("click", openAddDialog);
 passwordForm.addEventListener("submit", checkPassword);
 addExpenseForm.addEventListener("submit", registerExpense);
 cancelAddButton.addEventListener("click", closeAddDialog);
+deleteFromFormButton.addEventListener("click", deleteEditingExpense);
 addDialog.addEventListener("click", (event) => {
   if (event.target === addDialog) closeAddDialog();
 });
