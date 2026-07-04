@@ -1,15 +1,15 @@
-const CACHE_NAME = "couple-ledger-v9";
+const CACHE_NAME = "couple-ledger-v10";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=9",
-  "./script.js?v=9",
-  "./sync-config.js?v=9",
-  "./manifest.webmanifest?v=9",
+  "./styles.css?v=10",
+  "./script.js?v=10",
+  "./sync-config.js?v=10",
+  "./manifest.webmanifest?v=10",
   "./icon.svg",
-  "./apple-touch-icon.png?v=9",
-  "./icon-192.png?v=9",
-  "./icon-512.png?v=9",
+  "./apple-touch-icon.png?v=10",
+  "./icon-192.png?v=10",
+  "./icon-512.png?v=10",
 ];
 
 self.addEventListener("install", (event) => {
