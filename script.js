@@ -4,7 +4,7 @@ const PEOPLE = {
 };
 
 const STORAGE_KEY = "couple-ledger-expenses-v1";
-const PASSWORD = "0809PS.";
+const PASSWORD = "0809";
 
 const app = document.querySelector("#app");
 const passwordGate = document.querySelector("#passwordGate");
