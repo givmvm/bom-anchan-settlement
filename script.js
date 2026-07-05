@@ -14,6 +14,7 @@ const passwordError = document.querySelector("#passwordError");
 const addExpenseButton = document.querySelector("#addExpense");
 const expenseRows = document.querySelector("#expenseRows");
 const mobileExpenseList = document.querySelector("#mobileExpenseList");
+const spendingPeriodInput = document.querySelector("#spendingPeriod");
 const totalSpent = document.querySelector("#totalSpent");
 const quickSettlementAmount = document.querySelector("#quickSettlementAmount");
 const quickSettlementText = document.querySelector("#quickSettlementText");
@@ -89,6 +90,10 @@ function formatMonthLabel(value) {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return "日付なし";
   return `${date.getFullYear()}年${date.getMonth() + 1}月`;
+}
+
+function monthKey(value) {
+  return String(value || "").slice(0, 7);
 }
 
 function unlockApp() {
@@ -337,6 +342,12 @@ function calculateTotals(rows) {
       invalidRatios: 0,
     }
   );
+}
+
+function periodRows(rows) {
+  const selectedPeriod = spendingPeriodInput.value;
+  if (selectedPeriod === "all") return rows;
+  return rows.filter((expense) => monthKey(expense.date) === selectedPeriod);
 }
 
 function updateExpense(id, key, value) {
@@ -712,6 +723,27 @@ function renderMobileList(rows) {
   }
 }
 
+function renderSpendingPeriodOptions() {
+  const selectedPeriod = spendingPeriodInput.value || "all";
+  const months = [...new Set(expenses.map((expense) => monthKey(expense.date)).filter(Boolean))].sort().reverse();
+
+  spendingPeriodInput.innerHTML = "";
+
+  const allOption = document.createElement("option");
+  allOption.value = "all";
+  allOption.textContent = "全体";
+  spendingPeriodInput.appendChild(allOption);
+
+  for (const month of months) {
+    const option = document.createElement("option");
+    option.value = month;
+    option.textContent = formatMonthLabel(`${month}-01`);
+    spendingPeriodInput.appendChild(option);
+  }
+
+  spendingPeriodInput.value = months.includes(selectedPeriod) ? selectedPeriod : "all";
+}
+
 function getExpense(id) {
   return expenses.find((expense) => expense.id === id);
 }
@@ -779,10 +811,11 @@ function renderSettlement(bomDiff, invalidRatios) {
 function renderSummary() {
   const rows = expenses.map(calculateExpense);
   const totals = calculateTotals(rows);
+  const displayTotals = calculateTotals(periodRows(rows));
   const bomDiff = totals.bomPaid - totals.bomShare;
   const anchanDiff = totals.anchanPaid - totals.anchanShare;
 
-  totalSpent.textContent = formatYen(totals.spent);
+  totalSpent.textContent = formatYen(displayTotals.spent);
   bomPaid.textContent = formatYen(totals.bomPaid);
   anchanPaid.textContent = formatYen(totals.anchanPaid);
   bomShare.textContent = formatYen(totals.bomShare);
@@ -795,12 +828,14 @@ function renderSummary() {
 
 function render() {
   const rows = sortExpenses(expenses.map(calculateExpense));
+  renderSpendingPeriodOptions();
   renderRows(rows);
   renderMobileList(rows);
   renderSummary();
 }
 
 addExpenseButton.addEventListener("click", openAddDialog);
+spendingPeriodInput.addEventListener("change", renderSummary);
 passwordForm.addEventListener("submit", checkPassword);
 addExpenseForm.addEventListener("submit", registerExpense);
 cancelAddButton.addEventListener("click", closeAddDialog);

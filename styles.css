@@ -145,6 +145,25 @@ h2 {
   padding: 18px;
 }
 
+.summary-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.summary-head select {
+  max-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  outline-color: var(--accent);
+}
+
 .top-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(190px, 1fr));
@@ -188,7 +207,7 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: end;
-  margin-bottom: 18px;
+  margin-top: 18px;
 }
 
 .sync-panel p {
