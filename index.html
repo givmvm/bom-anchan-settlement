@@ -9,11 +9,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="ボムあん精算">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=13">
-    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=13">
-    <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png?v=13">
-    <link rel="manifest" href="manifest.webmanifest?v=13">
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=14">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=14">
+    <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png?v=14">
+    <link rel="manifest" href="manifest.webmanifest?v=14">
+    <link rel="stylesheet" href="styles.css?v=14">
   </head>
   <body>
     <section id="passwordGate" class="password-gate" aria-label="パスワード入力">
@@ -139,7 +139,9 @@
           </label>
           <button id="connectSync" type="button">同期する</button>
           <button id="syncNow" class="secondary" type="button">今すぐ同期</button>
+          <button id="exportBackup" class="secondary" type="button">バックアップを書き出す</button>
         </div>
+        <p id="recoveryNotice" class="sync-status warn" role="status"></p>
         <p id="syncStatus" class="sync-status">クラウド設定がまだありません。設定後に同期できます。</p>
       </section>
     </main>
@@ -201,7 +203,8 @@
       </form>
     </dialog>
 
-    <script src="sync-config.js?v=13"></script>
-    <script src="script.js?v=13"></script>
+    <script src="sync-config.js?v=14"></script>
+    <script src="sync-engine.js?v=14"></script>
+    <script src="script.js?v=14"></script>
   </body>
 </html>

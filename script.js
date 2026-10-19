@@ -55,6 +55,15 @@ let syncTimer = null;
 let activeRoomCode = localStorage.getItem("couple-ledger-room-code") || "bom-anchan";
 let lastCloudUpdatedAt = localStorage.getItem("couple-ledger-cloud-updated-at") || "";
 let isApplyingRemote = false;
+let ledgerState = null;
+let syncInFlight = null;
+let storageFailure = false;
+const DEVICE_KEY = "couple-ledger-device-id-v2";
+let deviceId = localStorage.getItem(DEVICE_KEY);
+if (!deviceId) {
+  deviceId = crypto.randomUUID();
+  localStorage.setItem(DEVICE_KEY, deviceId);
+}
 let editingExpenseId = null;
 
 const yen = new Intl.NumberFormat("ja-JP", {
@@ -121,7 +130,7 @@ function extractExpenseNumber(id) {
 }
 
 function createExpenseId() {
-  return `expense-${nextExpenseId++}`;
+  return `expense-${crypto.randomUUID()}`;
 }
 
 function sortExpenses(rows) {
@@ -142,7 +151,7 @@ function defaultExpenses() {
 
 function loadExpenses() {
   const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) return defaultExpenses();
+  if (!saved) return [];
 
   try {
     const parsed = JSON.parse(saved);
@@ -166,9 +175,79 @@ function loadExpenses() {
   }
 }
 
+function stateKey(room = activeRoomCode) {
+  return `couple-ledger-state-v2:${room}`;
+}
+
+function initializeSyncState({ newRoom = false } = {}) {
+  try {
+    // Preserve the exact pre-migration payload before normalizing or syncing anything.
+    const backupKey = `couple-ledger-original-v13:${activeRoomCode}`;
+    if (localStorage.getItem(backupKey) === null) {
+      localStorage.setItem(backupKey, JSON.stringify({
+        expenses: localStorage.getItem(STORAGE_KEY),
+        updatedAt: lastCloudUpdatedAt, roomCode: activeRoomCode,
+      }));
+    }
+    const saved = localStorage.getItem(stateKey());
+    if (saved) {
+      ledgerState = JSON.parse(saved);
+      if (ledgerState.version !== 2 || ledgerState.roomCode !== activeRoomCode) throw new Error("保存形式を確認してください。");
+      ledgerState.records = LedgerSync.merge(ledgerState.records);
+    } else {
+      const raw = newRoom ? null : localStorage.getItem(STORAGE_KEY);
+      ledgerState = { version: 2, roomCode: activeRoomCode,
+        records: LedgerSync.merge(raw ? JSON.parse(raw) : []), dirty: Boolean(raw) };
+    }
+    persistState();
+    expenses = LedgerSync.visible(ledgerState.records);
+  } catch (error) {
+    storageFailure = true;
+    setSyncStatus(`保存データを保護するため同期を停止しました。バックアップを書き出してください。${error.message}`, "warn");
+  }
+}
+
+function persistState() {
+  try {
+    // Write the complete state first; if quota is exhausted, never send volatile changes.
+    localStorage.setItem(stateKey(), JSON.stringify(ledgerState));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(LedgerSync.visible(ledgerState.records)));
+  } catch {
+    storageFailure = true;
+    throw new Error("端末の保存領域に書き込めません。画面を閉じずにバックアップを書き出してください。");
+  }
+}
+
 function saveExpenses() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
-  queueCloudSave();
+  try {
+    if (storageFailure || !ledgerState) throw new Error("同期を停止しています。先にバックアップを書き出してください。");
+    const revised = LedgerSync.revise(ledgerState.records, expenses, deviceId);
+    const stored = JSON.parse(localStorage.getItem(stateKey()) || "null");
+    ledgerState.records = LedgerSync.merge(revised, stored ? stored.records : []);
+    expenses = LedgerSync.visible(ledgerState.records);
+    ledgerState.dirty = true;
+    persistState();
+    setSyncStatus("端末に保存しました。共有先への送信待ちです。", "warn");
+    queueCloudSave();
+  } catch (error) { setSyncStatus(error.message, "warn"); }
+}
+
+function exportBackup() {
+  const saved = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key.startsWith("couple-ledger-")) saved[key] = localStorage.getItem(key);
+  }
+  const payload = { version: 2, exportedAt: new Date().toISOString(),
+    roomCode: activeRoomCode, expenses, state: ledgerState, saved };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `settlement-backup-${today()}-${deviceId.slice(0, 8)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function normalizeRoomCode(value) {
@@ -202,112 +281,171 @@ function supabaseEndpoint(roomCode) {
 
 function supabaseHeaders(prefer) {
   const config = getSyncConfig();
-  const headers = {
-    apikey: config.supabaseAnonKey,
-    Authorization: `Bearer ${config.supabaseAnonKey}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { apikey: config.supabaseAnonKey, "Content-Type": "application/json" };
+  // Publishable keys belong in apikey; only legacy JWT keys are Bearer tokens.
+  if (config.supabaseAnonKey.startsWith("eyJ")) headers.Authorization = `Bearer ${config.supabaseAnonKey}`;
   if (prefer) headers.Prefer = prefer;
   return headers;
 }
 
+async function cloudRequest(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { ...options, cache: "no-store", signal: controller.signal });
+    if (!response.ok) {
+      if (response.status === 409) return { conflict: true };
+      if ([401, 403].includes(response.status)) throw new Error("共有先のAPIキーまたはアクセス権限を確認してください。");
+      if (response.status === 404) throw new Error("共有先のテーブルまたは接続先を確認してください。");
+      throw new Error(`共有先でエラーが発生しました（HTTP ${response.status}）。`);
+    }
+    return await response.json();
+  } catch (error) {
+    if (error.name === "AbortError" || error instanceof TypeError) {
+      throw new Error("共有先に接続できません。記録は端末内に保持しています。通信環境またはSupabaseの稼働状態を確認してください。");
+    }
+    throw error;
+  } finally { window.clearTimeout(timeout); }
+}
+
 async function loadCloudLedger(roomCode) {
-  const response = await fetch(supabaseEndpoint(roomCode), {
-    headers: supabaseHeaders(),
-  });
-  if (!response.ok) throw new Error("クラウドから読み込めませんでした。");
-  const rows = await response.json();
+  const rows = await cloudRequest(`${supabaseEndpoint(roomCode)}&select=room_code,data,updated_at`, { headers: supabaseHeaders() });
+  if (!Array.isArray(rows)) throw new Error("共有先から不正な応答がありました。同期を停止しました。");
+  if (rows.length && (rows[0].room_code !== roomCode || typeof rows[0].updated_at !== "string")) {
+    throw new Error("共有データを確認できません。同期を停止しました。");
+  }
   return rows[0] || null;
 }
 
-async function saveCloudLedger(roomCode) {
-  if (!isSyncConfigured() || isApplyingRemote || !roomCode) return;
-
-  const now = new Date().toISOString();
-  const response = await fetch(supabaseEndpoint(roomCode), {
-    method: "POST",
-    headers: supabaseHeaders("resolution=merge-duplicates"),
-    body: JSON.stringify({
-      room_code: roomCode,
-      data: expenses,
-      updated_at: now,
-    }),
+async function saveCloudLedger(roomCode, records, previous) {
+  // Compare-and-swap: a concurrent writer changes updated_at, causing zero rows
+  // to be updated. Re-read and merge instead of overwriting their work.
+  const now = new Date(Math.max(Date.now(), previous ? Date.parse(previous.updated_at) + 1 : 0)).toISOString();
+  const base = getSyncConfig().supabaseUrl.replace(/\/$/, "") + "/rest/v1/ledgers";
+  const url = previous
+    ? `${supabaseEndpoint(roomCode)}&updated_at=eq.${encodeURIComponent(previous.updated_at)}`
+    : base;
+  const result = await cloudRequest(url, {
+    method: previous ? "PATCH" : "POST",
+    headers: supabaseHeaders("return=representation"),
+    body: JSON.stringify({ room_code: roomCode, data: records, updated_at: now }),
   });
-
-  if (!response.ok) throw new Error("クラウドへ保存できませんでした。");
-  lastCloudUpdatedAt = now;
-  localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
-  setSyncStatus(`同期済み: ${new Date(now).toLocaleString("ja-JP")}`, "ok");
+  if (result.conflict || (Array.isArray(result) && result.length === 0)) return null;
+  if (!Array.isArray(result) || result.length !== 1 || result[0].room_code !== roomCode) {
+    throw new Error("共有先への保存を確認できません。端末の記録を保持しています。");
+  }
+  return result[0];
 }
 
 function queueCloudSave() {
-  if (!isSyncConfigured() || isApplyingRemote || !activeRoomCode) return;
+  if (!isSyncConfigured() || storageFailure || !ledgerState) return;
   window.clearTimeout(syncTimer);
-  syncTimer = window.setTimeout(() => {
-    saveCloudLedger(activeRoomCode).catch((error) => setSyncStatus(error.message, "warn"));
-  }, 700);
+  syncTimer = window.setTimeout(() => requestSync(), 700);
 }
 
-function applyRemoteExpenses(remoteExpenses, updatedAt) {
-  if (!Array.isArray(remoteExpenses)) return;
-  isApplyingRemote = true;
-  expenses = remoteExpenses.map((expense, index) => {
-    const bomRatio = clamp(toNumber(expense.bomRatio), 0, 100);
-    return {
-      id: expense.id || `expense-${index + 1}`,
-      date: expense.date || today(),
-      title: expense.title || "",
-      amount: Math.max(0, toNumber(expense.amount)),
-      payer: expense.payer === "anchan" ? "anchan" : "bom",
-      bomRatio,
-      anchanRatio: 100 - bomRatio,
-    };
-  });
-  nextExpenseId = Math.max(...expenses.map((expense) => extractExpenseNumber(expense.id)), 0) + 1;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses));
-  lastCloudUpdatedAt = updatedAt || "";
-  localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
-  render();
-  isApplyingRemote = false;
+function applyMergedRecords(records) {
+  const changed = JSON.stringify(ledgerState.records) !== JSON.stringify(records);
+  ledgerState.records = records;
+  persistState();
+  if (changed) {
+    expenses = LedgerSync.visible(records);
+    render();
+  }
 }
 
-async function syncWithCloud({ forcePush = false } = {}) {
-  if (!isSyncConfigured()) {
-    setSyncStatus("クラウド設定がまだありません。Supabase設定を入れると同期できます。", "warn");
+function preserveConflictingVersions(remote) {
+  const local = new Map(ledgerState.records.map((row) => [row.id, row]));
+  for (const row of remote) {
+    const own = local.get(row.id);
+    if (!own || own._rev === row._rev ||
+        (LedgerSync.content(own) === LedgerSync.content(row) && own._deleted === row._deleted)) continue;
+    const losing = own._rev < row._rev ? own : row;
+    const key = `couple-ledger-conflict-v2:${activeRoomCode}:${losing.id}:${losing._rev}`;
+    // Keep the replaced version locally, including in exported backups.
+    if (localStorage.getItem(key) === null) {
+      try { localStorage.setItem(key, JSON.stringify(losing)); }
+      catch {
+        storageFailure = true;
+        throw new Error("競合した記録を保護する空き領域がありません。同期を停止しました。バックアップを書き出してください。");
+      }
+    }
+  }
+}
+
+async function performSync(roomCode) {
+  if (storageFailure || !ledgerState) return;
+  setSyncStatus("同期中です…端末内の記録を保持しています。");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    // Incorporate another tab's durable state before each attempt.
+    const stored = JSON.parse(localStorage.getItem(stateKey()) || "null");
+    if (stored) ledgerState.records = LedgerSync.merge(ledgerState.records, stored.records);
+    const cloud = await loadCloudLedger(roomCode);
+    const remote = cloud ? LedgerSync.merge(cloud.data) : [];
+    preserveConflictingVersions(remote);
+    const merged = LedgerSync.merge(remote, ledgerState.records);
+    applyMergedRecords(merged);
+    let saved = cloud;
+    if (!cloud || JSON.stringify(remote) !== JSON.stringify(merged)) {
+      saved = await saveCloudLedger(roomCode, merged, cloud);
+      if (!saved) continue;
+    }
+    // Edits may have happened while the request was in flight. Never mark those sent.
+    const current = JSON.parse(localStorage.getItem(stateKey()) || "null");
+    const latest = LedgerSync.merge(ledgerState.records, current ? current.records : []);
+    const all = LedgerSync.merge(merged, latest);
+    ledgerState.dirty = JSON.stringify(all) !== JSON.stringify(merged);
+    applyMergedRecords(all);
+    lastCloudUpdatedAt = saved.updated_at;
+    localStorage.setItem("couple-ledger-cloud-updated-at", lastCloudUpdatedAt);
+    if (ledgerState.dirty) continue;
+    setSyncStatus(`同期済み: ${new Date().toLocaleString("ja-JP")}（${expenses.length}件）`, "ok");
     return;
   }
+  throw new Error("他の端末と同時に更新されています。記録を保持し、次回の同期で再試行します。");
+}
 
-  const roomCode = normalizeRoomCode(roomCodeInput.value);
-  if (!roomCode) {
-    setSyncStatus("共有コードを入れてください。", "warn");
-    return;
+async function syncWithCloud({ allowRoomChange = false } = {}) {
+  if (storageFailure) return;
+  if (!isSyncConfigured()) throw new Error("共有先の設定がありません。記録は端末内に保存しています。");
+  const roomCode = allowRoomChange ? normalizeRoomCode(roomCodeInput.value) : activeRoomCode;
+  if (!roomCode) throw new Error("共有コードを入れてください。");
+  if (roomCode !== activeRoomCode) {
+    if (syncInFlight) throw new Error("同期が終わってから共有コードを変更してください。");
+    if (!window.confirm(`共有先を「${roomCode}」に切り替えますか？今の記録は「${activeRoomCode}」用として端末に保持し、新しい共有先には送信しません。`)) return;
+    persistState();
+    activeRoomCode = roomCode;
+    localStorage.setItem("couple-ledger-room-code", roomCode);
+    initializeSyncState({ newRoom: true });
+    roomCodeInput.value = roomCode;
+    render();
+    if (storageFailure) return;
   }
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = performSync(roomCode).finally(() => { syncInFlight = null; });
+  return syncInFlight;
+}
 
-  activeRoomCode = roomCode;
-  roomCodeInput.value = roomCode;
-  localStorage.setItem("couple-ledger-room-code", roomCode);
-  setSyncStatus("同期中です...", "");
-
-  const cloudLedger = await loadCloudLedger(roomCode);
-  if (!cloudLedger || forcePush) {
-    await saveCloudLedger(roomCode);
-    return;
-  }
-
-  const cloudUpdatedAt = cloudLedger.updated_at || "";
-  if (cloudUpdatedAt && cloudUpdatedAt !== lastCloudUpdatedAt) {
-    applyRemoteExpenses(cloudLedger.data, cloudUpdatedAt);
-    setSyncStatus(`クラウドから読み込みました: ${new Date(cloudUpdatedAt).toLocaleString("ja-JP")}`, "ok");
-    return;
-  }
-
-  await saveCloudLedger(roomCode);
+function requestSync() {
+  return syncWithCloud().catch((error) => setSyncStatus(error.message, "warn"));
 }
 
 function startAutoSync() {
+  requestSync();
   window.setInterval(() => {
-    syncWithCloud().catch((error) => setSyncStatus(error.message, "warn"));
+    if (document.visibilityState !== "hidden") requestSync();
   }, 8000);
+  window.addEventListener("online", requestSync);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") requestSync();
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key !== stateKey() || !event.newValue || storageFailure) return;
+    try {
+      const other = JSON.parse(event.newValue);
+      applyMergedRecords(LedgerSync.merge(ledgerState.records, other.records));
+      requestSync();
+    } catch (error) { setSyncStatus(error.message, "warn"); }
+  });
 }
 
 function calculateExpense(expense) {
@@ -832,6 +970,16 @@ function render() {
   renderRows(rows);
   renderMobileList(rows);
   renderSummary();
+  const notice = document.querySelector("#recoveryNotice");
+  const ids = expenses.map((row) => row._legacyId).filter(Boolean);
+  const duplicates = new Set(ids).size !== ids.length;
+  let conflicts = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    if (localStorage.key(i).startsWith(`couple-ledger-conflict-v2:${activeRoomCode}:`)) conflicts = true;
+  }
+  notice.textContent = duplicates
+    ? "復旧した支出に、同じ記録か判断できないものがあります。両方残しているため、一覧に重複がないか確認してください。"
+    : conflicts ? "更新前の記録もバックアップ内に保持しています。必要な場合は「バックアップを書き出す」で保存できます。" : "";
 }
 
 addExpenseButton.addEventListener("click", openAddDialog);
@@ -851,7 +999,7 @@ deleteDialog.addEventListener("click", (event) => {
   if (event.target === deleteDialog) closeDeleteDialog();
 });
 connectSyncButton.addEventListener("click", () => {
-  syncWithCloud({ forcePush: false }).catch((error) => setSyncStatus(error.message, "warn"));
+  syncWithCloud({ allowRoomChange: true }).catch((error) => setSyncStatus(error.message, "warn"));
 });
 syncNowButton.addEventListener("click", () => {
   syncWithCloud().catch((error) => setSyncStatus(error.message, "warn"));
@@ -862,16 +1010,18 @@ if ("serviceWorker" in navigator) {
 }
 
 roomCodeInput.value = activeRoomCode;
+initializeSyncState();
+document.querySelector("#exportBackup").addEventListener("click", exportBackup);
 if (sessionStorage.getItem("couple-ledger-unlocked") === "true") {
   unlockApp();
 } else {
   passwordInput.focus();
 }
 
-if (isSyncConfigured()) {
+if (!storageFailure && isSyncConfigured()) {
   setSyncStatus("共有コードを確認して「同期する」を押してください。");
   startAutoSync();
-} else {
+} else if (!storageFailure) {
   setSyncStatus("クラウド設定がまだありません。設定後に同期できます。", "warn");
 }
 
